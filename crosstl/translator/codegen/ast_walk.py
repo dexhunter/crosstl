@@ -25,25 +25,39 @@ _SEQUENCES = (list, tuple, set)
 
 def walk_ast_values(root: Any) -> Iterator[Any]:
     """Yield every non-container object reachable from ``root`` once, in pre-order."""
+    # Each value type is classified once per walk; empty containers are skipped.
+    skip, mapping, sequence, node = range(4)
+    kinds = {type(None): skip}
     visited = set()
     stack = [iter((root,))]
+    push = stack.append
     while stack:
         for value in stack[-1]:
-            if value is None or isinstance(value, _SCALARS):
+            kind = kinds.get(type(value))
+            if kind is None:
+                if isinstance(value, _SCALARS):
+                    kind = skip
+                elif isinstance(value, dict):
+                    kind = mapping
+                elif isinstance(value, _SEQUENCES):
+                    kind = sequence
+                else:
+                    kind = node
+                kinds[type(value)] = kind
+            if kind is skip:
                 continue
-            if isinstance(value, dict):
-                stack.append(iter(value.values()))
-                break
-            if isinstance(value, _SEQUENCES):
-                stack.append(iter(value))
-                break
-            value_id = id(value)
-            if value_id in visited:
-                continue
-            visited.add(value_id)
-            yield value
-            if hasattr(value, "__dict__"):
-                stack.append(iter(vars(value).values()))
+            if kind is node:
+                value_id = id(value)
+                if value_id in visited:
+                    continue
+                visited.add(value_id)
+                yield value
+                # Walk the attribute dict as a mapping; test it before
+                # building a values view so empty nodes allocate nothing.
+                value = getattr(value, "__dict__", None)
+                kind = mapping
+            if value:
+                push(iter(value.values() if kind is mapping else value))
                 break
         else:
             stack.pop()
